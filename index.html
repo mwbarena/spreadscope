@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SpreadScope — Live Funding Arbitrage</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&display=swap');
+
+  :root{
+    --bg: #06070A;
+    --glass: rgba(16,20,28,0.55);
+    --glass-edge: rgba(255,255,255,0.09);
+    --accent: #B6FF3B;
+    --accent-soft: rgba(182,255,59,0.18);
+    --pos: #3BFFB0;
+    --neg: #FF4D6D;
+    --text: #EDF1F4;
+    --muted: #7C879A;
+    --mono: 'IBM Plex Mono', monospace;
+    --sans: 'Inter', sans-serif;
+  }
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  html, body{ width:100%; height:100%; background:var(--bg); color:var(--text); font-family:var(--sans); overflow:hidden; }
+
+  /* ---------- Center ambient stage ---------- */
+  .stage{
+    position:fixed; inset:0;
+    background:
+      radial-gradient(ellipse 70% 50% at 68% 30%, rgba(182,255,59,0.05), transparent 60%),
+      radial-gradient(ellipse 60% 60% at 30% 80%, rgba(59,255,176,0.04), transparent 60%),
+      var(--bg);
+  }
+  #chartCanvas{ position:absolute; inset:0; width:100%; height:100%; }
+
+  /* ---------- Left: full-height 3D glass coin panel ---------- */
+  .coin-panel{
+    position:fixed; top:0; left:0; bottom:0;
+    width:380px;
+    background: var(--glass);
+    border-right: 1px solid var(--glass-edge);
+    backdrop-filter: blur(22px) saturate(140%);
+    -webkit-backdrop-filter: blur(22px) saturate(140%);
+    box-shadow:
+      inset -1px 0 0 rgba(255,255,255,0.04),
+      12px 0 40px rgba(0,0,0,0.5);
+    transform: perspective(1400px) rotateY(1.2deg);
+    transform-origin: left center;
+    display:flex; flex-direction:column;
+  }
+
+  .panel-head{
+    padding: 22px 20px 14px;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+  }
+  .brand{
+    display:flex; align-items:center; gap:10px; margin-bottom:4px;
+  }
+  .brand .logo{
+    width:26px; height:26px; border-radius:7px; background:var(--accent);
+    display:flex; align-items:center; justify-content:center; color:#06070A; font-weight:800; font-size:13px;
+  }
+  .brand-name{ font-weight:800; font-size:15px; letter-spacing:-0.01em; }
+  .panel-sub{
+    font-family:var(--mono); font-size:10.5px; color:var(--muted); letter-spacing:0.06em; text-transform:uppercase;
+    display:flex; align-items:center; gap:6px;
+  }
+  .dot-live{ width:6px; height:6px; border-radius:50%; background:var(--accent); box-shadow:0 0 8px var(--accent); animation:beat 1.1s ease-in-out infinite; }
+  @keyframes beat{ 0%,100%{transform:scale(1);} 30%{transform:scale(1.5);} 60%{transform:scale(0.9);} }
+
+  .coin-list{ flex:1; overflow-y:auto; padding: 6px 0; }
+  .coin-list::-webkit-scrollbar{ width:3px; }
+  .coin-list::-webkit-scrollbar-thumb{ background:rgba(255,255,255,0.1); }
+
+  .coin-row{
+    padding: 12px 20px;
+    border-bottom: 1px solid rgba(255,255,255,0.045);
+    cursor:default;
+    transition: background 0.15s ease;
+  }
+  .coin-row:hover{ background: rgba(255,255,255,0.025); }
+  .coin-row.hot{ background: linear-gradient(90deg, rgba(182,255,59,0.07), transparent); }
+
+  .coin-top{ display:flex; justify-content:space-between; align-items:baseline; margin-bottom:5px; }
+  .coin-name{ display:flex; align-items:center; gap:7px; }
+  .coin-sym{ font-weight:700; font-size:14.5px; letter-spacing:-0.01em; }
+  .mover-tag{
+    font-family:var(--mono); font-size:9px; padding:1.5px 6px; border-radius:8px;
+    background: rgba(255,180,60,0.15); color:#FFB43C; letter-spacing:0.04em;
+  }
+  .coin-spread{ font-family:var(--mono); font-size:13px; font-weight:600; }
+  .coin-spread.hot{ color:var(--accent); }
+  .coin-spread.cold{ color:var(--muted); font-weight:400; }
+
+  .exch-chips{ display:flex; flex-wrap:wrap; gap:5px; margin-top:6px; }
+  .chip{
+    font-family:var(--mono); font-size:9.5px; padding:2px 7px; border-radius:6px;
+    background: rgba(255,255,255,0.05); color:var(--muted); border:1px solid rgba(255,255,255,0.06);
+  }
+  .chip b{ color:var(--text); font-weight:600; }
+  .chip.max{ border-color: rgba(59,255,176,0.35); color:#3BFFB0; }
+  .chip.min{ border-color: rgba(255,77,109,0.35); color:#FF4D6D; }
+
+  .change24h{ font-family:var(--mono); font-size:10px; }
+  .change24h.up{ color:var(--pos); }
+  .change24h.down{ color:var(--neg); }
+
+  .panel-foot{
+    padding: 12px 20px; border-top: 1px solid rgba(255,255,255,0.06);
+    font-family:var(--mono); font-size:9.5px; color:var(--muted); line-height:1.5;
+  }
+
+  /* ---------- Compact controls dock (top-right, out of the way of the empty center) ---------- */
+  .controls-dock{
+    position:fixed; top:20px; right:20px;
+    background: var(--glass);
+    border: 1px solid var(--glass-edge);
+    border-radius: 16px;
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    padding: 12px;
+    display:flex; flex-direction:column; gap:6px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.4);
+    width: 190px;
+  }
+  .status-row{
+    display:flex; align-items:center; gap:6px; font-family:var(--mono); font-size:9.5px; color:var(--muted);
+    padding: 4px 8px; margin-bottom:2px;
+  }
+  .status-row .d{ width:5px; height:5px; border-radius:50%; background:var(--muted); }
+
+  .dock-btn{
+    padding: 9px 12px; border-radius:10px; border:1px solid rgba(255,255,255,0.08);
+    background: rgba(255,255,255,0.03); color:var(--text); font-family:var(--sans); font-weight:600; font-size:12px;
+    text-align:left; cursor:pointer; display:flex; justify-content:space-between; align-items:center;
+  }
+  .dock-btn:hover{ background: rgba(255,255,255,0.07); }
+  .dock-btn.primary{ background: var(--accent); color:#06070A; border-color:var(--accent); }
+  .dock-btn.danger{ border-color: rgba(255,77,109,0.25); }
+
+  .last-update{
+    position:fixed; bottom:14px; right:20px;
+    font-family:var(--mono); font-size:9.5px; color:var(--muted);
+  }
+
+  @media (max-width: 720px){
+    .coin-panel{ width:100%; height:56vh; bottom:auto; transform:none; border-right:none; border-bottom:1px solid var(--glass-edge); }
+    .controls-dock{ top:auto; bottom:14px; left:20px; right:20px; width:auto; flex-direction:row; flex-wrap:wrap; }
+    .status-row{ width:100%; }
+    .dock-btn{ flex:1 1 40%; }
+    .last-update{ display:none; }
+  }
+</style>
+</head>
+<body>
+
+<div class="stage"><canvas id="chartCanvas"></canvas></div>
+
+<div class="coin-panel">
+  <div class="panel-head">
+    <div class="brand"><span class="logo">S</span><span class="brand-name">SpreadScope</span></div>
+    <div class="panel-sub"><span class="dot-live"></span> Live cross-exchange funding</div>
+  </div>
+  <div class="coin-list" id="coinList">
+    <div class="coin-row"><div class="coin-top"><span class="coin-sym">Loading…</span></div></div>
+  </div>
+  <div class="panel-foot" id="footNote">Fee floor per round trip: ~0.10% — spread must clear this. Sorted by widest gap first.</div>
+</div>
+
+<div class="controls-dock">
+  <div class="status-row"><span class="d"></span> Exchange: Not Connected</div>
+  <button class="dock-btn primary" onclick="showStub('Open Trade')">Open Trade <span>›</span></button>
+  <button class="dock-btn danger" onclick="showStub('Close Trade')">Close Trade <span>›</span></button>
+  <button class="dock-btn" onclick="showStub('Alerts')">Alerts <span>›</span></button>
+  <button class="dock-btn" onclick="showStub('Settings')">Settings <span>›</span></button>
+</div>
+
+<div class="last-update" id="lastUpdate">—</div>
+
+<script>
+const MIN_SPREAD_PCT = 0.05;
+const REFRESH_MS = 45000;
+const API_ENDPOINT = '/api/rates';
+const EXCH_LABEL = { okx:'OKX', bybit:'Bybit', hyperliquid:'HL', binance:'Binance' };
+
+// ---------- Ambient center chart (decorative, not a real price feed) ----------
+const canvas = document.getElementById('chartCanvas');
+const ctx = canvas.getContext('2d');
+function resize(){ canvas.width = innerWidth; canvas.height = innerHeight; }
+resize(); addEventListener('resize', resize);
+
+let points = [];
+const N = 140;
+function seed(){
+  points = [];
+  let v = innerHeight * 0.55;
+  for(let i=0;i<N;i++){
+    v += (Math.random()-0.5) * 30;
+    v = Math.max(innerHeight*0.3, Math.min(innerHeight*0.75, v));
+    points.push(v);
+  }
+}
+seed();
+
+function tick(){
+  points.shift();
+  let last = points[points.length-1];
+  last += (Math.random()-0.5) * 26;
+  last = Math.max(innerHeight*0.25, Math.min(innerHeight*0.8, last));
+  points.push(last);
+}
+
+function draw(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  const leftOffset = window.innerWidth > 720 ? 380 : 0;
+  const usableWidth = canvas.width - leftOffset - 60;
+  const stepX = usableWidth / (N-1);
+
+  ctx.save();
+  ctx.translate(leftOffset + 30, 0);
+
+  // glow line
+  ctx.beginPath();
+  points.forEach((y,i)=>{
+    const x = i*stepX;
+    if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+  });
+  ctx.strokeStyle = 'rgba(182,255,59,0.55)';
+  ctx.lineWidth = 1.6;
+  ctx.shadowColor = 'rgba(182,255,59,0.6)';
+  ctx.shadowBlur = 12;
+  ctx.stroke();
+
+  // filled gradient under line
+  const grad = ctx.createLinearGradient(0,0,0,canvas.height);
+  grad.addColorStop(0, 'rgba(182,255,59,0.08)');
+  grad.addColorStop(1, 'rgba(182,255,59,0)');
+  ctx.lineTo(usableWidth, canvas.height);
+  ctx.lineTo(0, canvas.height);
+  ctx.closePath();
+  ctx.fillStyle = grad;
+  ctx.shadowBlur = 0;
+  ctx.fill();
+  ctx.restore();
+}
+
+function loop(){
+  tick();
+  draw();
+}
+setInterval(loop, 70);
+
+// ---------- Data ----------
+const coinListEl = document.getElementById('coinList');
+const lastUpdateEl = document.getElementById('lastUpdate');
+
+function renderList(data){
+  if(!data || !data.length){
+    coinListEl.innerHTML = '<div class="coin-row"><div class="coin-top"><span class="coin-sym">No data</span></div></div>';
+    return;
+  }
+  coinListEl.innerHTML = '';
+  data.forEach(item=>{
+    const hot = item.spread >= MIN_SPREAD_PCT;
+    const names = Object.keys(item.rates);
+    let maxName = names[0], minName = names[0];
+    names.forEach(n=>{
+      if(item.rates[n] > item.rates[maxName]) maxName = n;
+      if(item.rates[n] < item.rates[minName]) minName = n;
+    });
+
+    const chips = names.map(n=>{
+      let cls = 'chip';
+      if(n===maxName) cls += ' max';
+      if(n===minName) cls += ' min';
+      return `<span class="${cls}">${EXCH_LABEL[n]||n} <b>${item.rates[n].toFixed(4)}%</b></span>`;
+    }).join('');
+
+    const changeHtml = item.change24h !== null && item.change24h !== undefined
+      ? `<span class="change24h ${item.change24h>=0?'up':'down'}">${item.change24h>=0?'+':''}${item.change24h.toFixed(2)}%</span>`
+      : '';
+
+    const row = document.createElement('div');
+    row.className = 'coin-row' + (hot ? ' hot' : '');
+    row.innerHTML = `
+      <div class="coin-top">
+        <div class="coin-name">
+          <span class="coin-sym">${item.symbol.replace('USDT','')}</span>
+          ${item.isMover ? '<span class="mover-tag">MOVER</span>' : ''}
+          ${changeHtml}
+        </div>
+        <span class="coin-spread ${hot?'hot':'cold'}">${hot?'● ':''}${item.spread.toFixed(4)}%</span>
+      </div>
+      <div class="exch-chips">${chips}</div>
+    `;
+    coinListEl.appendChild(row);
+  });
+}
+
+async function fetchRates(){
+  try{
+    const res = await fetch(API_ENDPOINT, { cache:'no-store' });
+    const json = await res.json();
+    renderList(json.data || []);
+    lastUpdateEl.textContent = 'Updated ' + new Date(json.timestamp || Date.now()).toLocaleTimeString();
+  }catch(e){
+    coinListEl.innerHTML = '<div class="coin-row"><div class="coin-top"><span class="coin-sym">Fetch error</span></div></div>';
+    lastUpdateEl.textContent = 'Error: ' + e.message;
+  }
+}
+fetchRates();
+setInterval(fetchRates, REFRESH_MS);
+
+function showStub(action){
+  alert(action + ': exchange connection not set up yet.\\n\\nThis will activate once API keys with trade permission are wired to the backend.');
+}
+</script>
+
+</body>
+</html>
